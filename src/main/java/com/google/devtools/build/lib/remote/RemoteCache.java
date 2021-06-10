@@ -39,6 +39,7 @@ import com.google.common.flogger.GoogleLogger;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.SettableFuture;
 import com.google.devtools.build.lib.actions.ActionInput;
 import com.google.devtools.build.lib.actions.Artifact;
@@ -56,6 +57,7 @@ import com.google.devtools.build.lib.profiler.SilentCloseable;
 import com.google.devtools.build.lib.remote.RemoteCache.ActionResultMetadata.DirectoryMetadata;
 import com.google.devtools.build.lib.remote.RemoteCache.ActionResultMetadata.FileMetadata;
 import com.google.devtools.build.lib.remote.RemoteCache.ActionResultMetadata.SymlinkMetadata;
+import com.google.devtools.build.lib.remote.common.OutputDigestMismatchException;
 import com.google.devtools.build.lib.remote.common.RemoteCacheClient;
 import com.google.devtools.build.lib.remote.common.RemoteCacheClient.ActionKey;
 import com.google.devtools.build.lib.remote.options.RemoteOptions;
@@ -108,11 +110,17 @@ public class RemoteCache implements AutoCloseable {
   protected final RemoteOptions options;
   protected final DigestUtil digestUtil;
 
+  private Path captureCorruptedOutputsDir;
+
   public RemoteCache(
       RemoteCacheClient cacheProtocol, RemoteOptions options, DigestUtil digestUtil) {
     this.cacheProtocol = cacheProtocol;
     this.options = options;
     this.digestUtil = digestUtil;
+  }
+
+  public void setCaptureCorruptedOutputsDir(Path captureCorruptedOutputsDir) {
+    this.captureCorruptedOutputsDir = captureCorruptedOutputsDir;
   }
 
   public ActionResult downloadActionResult(ActionKey actionKey, boolean inlineOutErr)
@@ -316,7 +324,10 @@ public class RemoteCache implements AutoCloseable {
                 (file) -> {
                   try {
                     ListenableFuture<Void> download =
-                        downloadFile(toTmpDownloadPath(file.path()), file.digest());
+                        downloadFile(
+                            file.path().relativeTo(execRoot).getPathString(),
+                            toTmpDownloadPath(file.path()),
+                            file.digest());
                     return Futures.transform(download, (d) -> file, directExecutor());
                   } catch (IOException e) {
                     return Futures.<FileMetadata>immediateFailedFuture(e);
@@ -337,6 +348,30 @@ public class RemoteCache implements AutoCloseable {
     try {
       waitForBulkTransfer(downloads, /* cancelRemainingOnInterrupt=*/ true);
     } catch (Exception e) {
+      if (captureCorruptedOutputsDir != null) {
+        if (e instanceof BulkTransferException) {
+          for (Throwable suppressed : e.getSuppressed()) {
+            if (suppressed instanceof OutputDigestMismatchException) {
+              // Capture corrupted outputs
+              try {
+                String outputPath = ((OutputDigestMismatchException) suppressed).getOutputPath();
+                Path localPath = ((OutputDigestMismatchException) suppressed).getLocalPath();
+                Path dst = captureCorruptedOutputsDir.getRelative(outputPath);
+                dst.createDirectoryAndParents();
+
+                // Make sure dst is still under captureCorruptedOutputsDir, otherwise
+                // IllegalArgumentException will be thrown.
+                dst.relativeTo(captureCorruptedOutputsDir);
+
+                FileSystemUtils.copyFile(localPath, dst);
+              } catch (Exception ee) {
+                ee.addSuppressed(ee);
+              }
+            }
+          }
+        }
+      }
+
       try {
         // Delete any (partially) downloaded output files.
         for (OutputFile file : result.getOutputFilesList()) {
@@ -441,6 +476,34 @@ public class RemoteCache implements AutoCloseable {
           .createDirectoryAndParents();
       symlink.path().createSymbolicLink(symlink.target());
     }
+  }
+
+  public ListenableFuture<Void> downloadFile(
+      String outputPath, Path localPath, Digest digest)
+      throws IOException {
+    SettableFuture<Void> outerF = SettableFuture.create();
+    ListenableFuture<Void> f = downloadFile(localPath, digest);
+    Futures.addCallback(
+        f,
+        new FutureCallback<Void>() {
+          @Override
+          public void onSuccess(Void unused) {
+            outerF.set(null);
+          }
+
+          @Override
+          public void onFailure(Throwable throwable) {
+            if (throwable instanceof OutputDigestMismatchException) {
+              OutputDigestMismatchException e = ((OutputDigestMismatchException) throwable);
+              e.setOutputPath(outputPath);
+              e.setLocalPath(localPath);
+            }
+            outerF.setException(throwable);
+          }
+        },
+        MoreExecutors.directExecutor());
+
+    return outerF;
   }
 
   /** Downloads a file (that is not a directory). The content is fetched from the digest. */
