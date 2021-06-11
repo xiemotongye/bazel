@@ -98,6 +98,7 @@ public final class Bazel {
       }
       Properties props = new Properties();
       props.load(in);
+      props.put("build.label", "4.0.0");
       ImmutableMap.Builder<String, String> buildData = ImmutableMap.builder();
       for (Object key : props.keySet()) {
         String stringKey = key.toString();
