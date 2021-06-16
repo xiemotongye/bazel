@@ -58,6 +58,13 @@ class BulkTransferException extends IOException {
     if (super.getSuppressed().length == 1) {
       return super.getSuppressed()[0].getMessage();
     }
-    return String.format("%d errors during bulk transfer", super.getSuppressed().length);
+    StringBuilder errorMessage = new StringBuilder();
+    Integer index = 0;
+    errorMessage.append(String.format("%d errors during bulk transfer\n", super.getSuppressed().length));
+    for (Throwable suppress : super.getSuppressed()) {
+      errorMessage.append(String.format("%d: %s\n", index, suppress.getMessage()));
+      index += 1;
+    }
+    return errorMessage.toString();
   }
 }

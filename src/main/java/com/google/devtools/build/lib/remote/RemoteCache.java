@@ -840,6 +840,10 @@ public class RemoteCache implements AutoCloseable {
         if (stat.isDirectory()) {
           addDirectory(file);
         } else if (stat.isFile() && !stat.isSpecialFile()) {
+          // did not upload larger than 100MB
+          if (file.getFileSize() > 100000000) {
+            continue;
+          }
           Digest digest = digestUtil.compute(file, stat.getSize());
           addFile(digest, file);
         } else if (stat.isSymbolicLink() && allowSymlinks) {
