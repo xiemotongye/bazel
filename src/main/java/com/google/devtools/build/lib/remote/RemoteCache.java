@@ -193,6 +193,10 @@ public class RemoteCache implements AutoCloseable {
     ImmutableList.Builder<ListenableFuture<Void>> uploads = ImmutableList.builder();
     for (Digest digest : digestsToUpload) {
       Path file = digestToFile.get(digest);
+      // did not upload larger than 100MB
+      if (file.getFileSize() > 100000000) {
+        continue;
+      }
       if (file != null) {
         uploads.add(cacheProtocol.uploadFile(context, digest, file));
       } else {
@@ -840,10 +844,6 @@ public class RemoteCache implements AutoCloseable {
         if (stat.isDirectory()) {
           addDirectory(file);
         } else if (stat.isFile() && !stat.isSpecialFile()) {
-          // did not upload larger than 100MB
-          if (file.getFileSize() > 100000000) {
-            continue;
-          }
           Digest digest = digestUtil.compute(file, stat.getSize());
           addFile(digest, file);
         } else if (stat.isSymbolicLink() && allowSymlinks) {
