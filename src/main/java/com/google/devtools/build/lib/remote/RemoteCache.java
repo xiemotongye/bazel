@@ -49,6 +49,7 @@ import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.actions.UserExecException;
 import com.google.devtools.build.lib.actions.cache.MetadataInjector;
 import com.google.devtools.build.lib.concurrent.ThreadSafety;
+import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.exec.SpawnRunner.SpawnExecutionContext;
 import com.google.devtools.build.lib.profiler.Profiler;
 import com.google.devtools.build.lib.profiler.SilentCloseable;
@@ -328,6 +329,9 @@ public class RemoteCache implements AutoCloseable {
                         downloadFile(context, toTmpDownloadPath(file.path()), file.digest());
                     return Futures.transform(download, (d) -> file, directExecutor());
                   } catch (IOException e) {
+                    if (e instanceof BulkTransferException) {
+                      ((BulkTransferException)e).customizedMessage = file.path().toString();
+                    }
                     return Futures.<FileMetadata>immediateFailedFuture(e);
                   }
                 })
