@@ -57,7 +57,7 @@ class BulkTransferException extends IOException {
   public String getMessage() {
     // If there is only one suppressed exception, displaying that in the message should be helpful.
     if (super.getSuppressed().length == 1) {
-      return String.format("1 error during bulk transfer.\n%s\n%s", customizedMessage, super.getSuppressed()[0].getMessage())
+      return String.format("1 error during bulk transfer.\n%s\n%s", customizedMessage, super.getSuppressed()[0].getMessage());
     }
     StringBuilder errorMessage = new StringBuilder();
     Integer index = 0;
